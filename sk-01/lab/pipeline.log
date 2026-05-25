@@ -1,0 +1,15 @@
+2026-05-19 15:38:18,648 [INFO] Generated website CSV: 1020 records
+2026-05-19 15:38:18,737 [INFO] Generated CRM JSON: 500 records
+2026-05-19 15:38:18,774 [INFO] Generated ERP fixed-width: 250 records
+2026-05-19 15:38:18,774 [INFO] Synthetic data generation complete.
+2026-05-20 10:55:39,909 [INFO] Generated website CSV: 1020 records
+2026-05-20 10:55:40,012 [INFO] Generated CRM JSON: 500 records
+2026-05-20 10:55:40,054 [INFO] Generated ERP fixed-width: 250 records
+2026-05-20 10:55:40,054 [INFO] Synthetic data generation complete.
+2026-05-20 10:55:40,054 [INFO] Ingesting website CSV: data/raw/website_customers.csv
+2026-05-20 10:55:40,066 [INFO]   Removed 20 test accounts
+2026-05-20 10:55:40,067 [INFO]   Ingested 1000 records from website CSV
+2026-05-20 11:35:19,120 [INFO] Generated website CSV: 1020 records
+2026-05-20 11:35:19,257 [INFO] Generated CRM JSON: 500 records
+2026-05-20 11:35:19,345 [INFO] Generated ERP fixed-width: 250 records
+2026-05-20 11:35:19,345 [INFO] Synthetic data generation complete.
