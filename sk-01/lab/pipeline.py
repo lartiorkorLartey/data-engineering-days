@@ -614,3 +614,166 @@ def run_quality_checks(df: pd.DataFrame) -> pd.DataFrame:
         "Registration dates must be between 2010 and today"
     )
     return v.generate_report()
+
+# include AI-based inference to fill in missing regions using Claude LLM
+import anthropic  # pip install anthropic
+
+def infer_region_with_llm(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Use Claude to infer missing region values from available context.
+    Only processes records with null region — never overwrites existing values.
+
+    Args:
+        df: DataFrame with 'region', 'email', 'first_name', 'last_name' columns.
+
+    Returns:
+        DataFrame with inferred regions filled in and a 'region_inferred' flag.
+    """
+    client = anthropic.Anthropic()  # Uses ANTHROPIC_API_KEY env var
+    null_region_mask = df["region"].isna()
+    null_count = null_region_mask.sum()
+
+    if null_count == 0:
+        logger.info("No null regions to infer.")
+        df["region_inferred"] = False
+        return df
+
+    logger.info(f"Inferring region for {null_count} records using LLM...")
+    df = df.copy()
+    df["region_inferred"] = False
+
+    null_records = df[null_region_mask].copy()
+
+    # Batch records to reduce API calls (10 records per call)
+    batch_size = 10
+    inferred_regions = {}
+
+    for i in range(0, len(null_records), batch_size):
+        batch = null_records.iloc[i:i + batch_size]
+        records_text = "\n".join([
+            f"  - Index {idx}: email={row.get('email', 'unknown')}, "
+            f"name={row.get('first_name', '')} {row.get('last_name', '')}"
+            for idx, row in batch.iterrows()
+        ])
+
+        prompt = f"""You are a data engineer. Based on the following customer records, 
+infer the most likely geographic region for each. The only valid regions are:
+- US (United States and Canada)
+- EU (Europe, Middle East, Africa)  
+- APAC (Asia Pacific, Australia, New Zealand)
+
+Use email domains, name patterns, and any other available signals.
+If you truly cannot infer, respond with UNKNOWN.
+
+Records:
+{records_text}
+
+Respond ONLY in JSON format like:
+{{"results": [{{"index": <index>, "region": "<US|EU|APAC|UNKNOWN>", "confidence": "<high|medium|low>", "reason": "<brief reason>"}}]}}"""
+
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=500,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            result = json.loads(response.content[0].text)
+            for item in result["results"]:
+                idx = item["index"]
+                region = item["region"]
+                if region in CONFIG["valid_regions"]:
+                    inferred_regions[idx] = region
+                    logger.info(
+                        f"  Inferred region for index {idx}: {region} "
+                        f"(confidence: {item['confidence']}, reason: {item['reason']})"
+                    )
+        except Exception as e:
+            logger.warning(f"  LLM inference failed for batch {i}-{i+batch_size}: {e}")
+
+    # Apply inferred regions
+    for idx, region in inferred_regions.items():
+        df.at[idx, "region"] = region
+        df.at[idx, "region_inferred"] = True
+
+    inferred_count = df["region_inferred"].sum()
+    still_null = df["region"].isna().sum()
+    logger.info(f"  Regions inferred by LLM: {inferred_count}")
+    logger.info(f"  Regions still null (UNKNOWN or inference failed): {still_null}")
+    return df
+
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+def generate_eda_report(df: pd.DataFrame, output_dir: Path):
+    """Generate a professional 6-chart EDA and quality visualization."""
+    logger.info("STEP 5: Generating EDA visualization...")
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle("ShopStream Customer Data Quality Report", fontsize=16, fontweight="bold")
+    colors = ["#2196F3", "#4CAF50", "#FF9800", "#F44336", "#9C27B0", "#00BCD4"]
+
+    # 1. Customer Count by Region
+    region_counts = df["region"].value_counts()
+    axes[0, 0].bar(region_counts.index, region_counts.values, color=colors[:len(region_counts)])
+    axes[0, 0].set_title("Customers by Region")
+    axes[0, 0].set_ylabel("Count")
+    for i, (r, c) in enumerate(region_counts.items()):
+        axes[0, 0].text(i, c + 50, f"{c:,}", ha="center", fontweight="bold", fontsize=9)
+
+    # 2. Registration Trend
+    monthly = df.dropna(subset=["registration_date"]).set_index("registration_date").resample("ME").size()
+    axes[0, 1].plot(monthly.index, monthly.values, color=colors[0], linewidth=2)
+    axes[0, 1].fill_between(monthly.index, monthly.values, alpha=0.2, color=colors[0])
+    axes[0, 1].set_title("Monthly Registration Trend")
+    axes[0, 1].set_ylabel("New Customers")
+    axes[0, 1].tick_params(axis="x", rotation=45)
+
+    # 3. Source Contribution
+    if "sources" in df.columns:
+        source_counts = df["sources"].str.split(",").explode().value_counts()
+    else:
+        source_counts = df["source"].value_counts()
+    axes[0, 2].pie(source_counts.values, labels=source_counts.index,
+                   autopct="%1.1f%%", colors=colors[:len(source_counts)], startangle=90)
+    axes[0, 2].set_title("Records by Source System")
+
+    # 4. Field Completeness
+    fields = ["email", "first_name", "last_name", "phone", "region"]
+    completeness = df[fields].notna().mean().sort_values()
+    bar_colors = ["#F44336" if v < 0.9 else "#4CAF50" for v in completeness.values]
+    axes[1, 0].barh(completeness.index, completeness.values, color=bar_colors)
+    axes[1, 0].set_xlim(0, 1.1)
+    axes[1, 0].axvline(x=CONFIG["quality_threshold"], color="red",
+                       linestyle="--", label=f"{CONFIG['quality_threshold']:.0%} threshold")
+    axes[1, 0].set_title("Field Completeness Rate")
+    axes[1, 0].legend(fontsize=8)
+    for i, v in enumerate(completeness.values):
+        axes[1, 0].text(v + 0.01, i, f"{v:.1%}", va="center", fontsize=9)
+
+    # 5. Email Validity Breakdown
+    if "email_valid" in df.columns:
+        valid_counts = df["email_valid"].value_counts()
+        labels = ["Valid", "Invalid"]
+        values = [valid_counts.get(True, 0), valid_counts.get(False, 0)]
+        wedge_colors = [colors[1], colors[3]]
+        axes[1, 1].pie(values, labels=labels, autopct="%1.1f%%",
+                       colors=wedge_colors, startangle=90)
+        axes[1, 1].set_title("Email Validity")
+
+    # 6. Opt-Out Rate by Region
+    if "opt_out" in df.columns:
+        opt_out_rate = df.groupby("region")["opt_out"].mean().sort_values()
+        axes[1, 2].bar(opt_out_rate.index, opt_out_rate.values,
+                       color=[colors[3] if v > 0.2 else colors[1] for v in opt_out_rate.values])
+        axes[1, 2].set_title("Opt-Out Rate by Region")
+        axes[1, 2].set_ylabel("Opt-Out Rate")
+        axes[1, 2].axhline(y=0.2, color="red", linestyle="--", label="20% threshold")
+        for i, (region, rate) in enumerate(opt_out_rate.items()):
+            axes[1, 2].text(i, rate + 0.005, f"{rate:.1%}", ha="center", fontsize=9)
+
+    plt.tight_layout()
+    output_path = output_dir / "customer_quality_report.png"
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    logger.info(f"  EDA report saved: {output_path}")

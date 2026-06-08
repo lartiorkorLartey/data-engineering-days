@@ -13,3 +13,7 @@
 2026-05-20 11:35:19,257 [INFO] Generated CRM JSON: 500 records
 2026-05-20 11:35:19,345 [INFO] Generated ERP fixed-width: 250 records
 2026-05-20 11:35:19,345 [INFO] Synthetic data generation complete.
+2026-05-28 11:57:35,745 [INFO] Generated website CSV: 1020 records
+2026-05-28 11:57:35,834 [INFO] Generated CRM JSON: 500 records
+2026-05-28 11:57:35,873 [INFO] Generated ERP fixed-width: 250 records
+2026-05-28 11:57:35,874 [INFO] Synthetic data generation complete.
