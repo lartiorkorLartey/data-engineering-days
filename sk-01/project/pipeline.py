@@ -2,8 +2,9 @@ from pathlib import Path
 import pandas as pd
 import logging
 import xml.etree.ElementTree as ET
+import json
 
-# setup logging
+##### setup logging #####
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -87,3 +88,52 @@ def ingest_payroll_data_excel(filepath: Path) -> pd.DataFrame:
         logging.error(f"Error ingesting Payroll Excel: {e}")
         return pd.DataFrame()  # Return empty DataFrame on error
 
+##### ingesting json data #####
+def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
+    """
+    Ingests AcquiredCo data from a JSON file.
+
+    Args:
+    filepath: Path to the JSON file.
+
+    Returns:
+    DataFrame containing the ingested data, or an empty DataFrame on error.
+    """
+    try:
+        logging.info(f"Ingesting AcquiredCo JSON: {filepath}")  
+         
+        raw_data = json.loads(filepath.read_text())
+        extracted_employees = []
+        page = 1
+        start_idx = 0
+        page_size = 1000
+        total_records = len(raw_data)
+
+        while start_idx < total_records:
+            end_idx = start_idx + page_size
+            page_data = raw_data[start_idx:end_idx]
+
+            if not page_data:
+                break   
+
+            for record in page_data:
+                if "employees" in record:
+                    extracted_employees.append(record["employees"])
+               
+            logging.info(f"Unpacked data up to row index {end_idx}")
+            start_idx += page_size
+            page += 1
+
+        df = pd.json_normalize(extracted_employees, sep="_")
+        df["source"] = "AcquiredCo JSON"  # Add source column for traceability
+
+        logging.info(f"Successfully ingested AcquiredCo JSON: {filepath} with {len(df)} records")
+        return df
+
+    except FileNotFoundError:
+        logging.error(f"File not found: {filepath}")
+        return pd.DataFrame()  # Return empty DataFrame on error        
+    except Exception as e:
+        logging.error(f"Error ingesting JSON data: {e}")
+        return pd.DataFrame()  # Return empty DataFrame on error
+    
