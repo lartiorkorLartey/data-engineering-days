@@ -55,7 +55,7 @@ def ingest_globaltech_csv(filepath: Path) -> pd.DataFrame:
         return pd.DataFrame()  # Return empty DataFrame on error
 
 ##### ingesting excel data #####
-def ingest_payroll_data_excel(filepath: Path) -> pd.DataFrame:
+def ingest_payroll_excel(filepath: Path) -> pd.DataFrame:
     """
     Ingests payroll data from an Excel file.
     Includes source tagging and graceful error handling.
