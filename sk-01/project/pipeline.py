@@ -103,23 +103,22 @@ def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
         logging.info(f"Ingesting AcquiredCo JSON: {filepath}")  
          
         raw_data = json.loads(filepath.read_text())
+        employees = raw_data["employees"]
         extracted_employees = []
         page = 1
         start_idx = 0
         page_size = 1000
-        total_records = len(raw_data)
+        total_records = len(employees)
 
         while start_idx < total_records:
             end_idx = start_idx + page_size
-            page_data = raw_data[start_idx:end_idx]
+            page_data = employees[start_idx:end_idx]
 
             if not page_data:
-                break   
+                break
 
-            for record in page_data:
-                if "employees" in record:
-                    extracted_employees.append(record["employees"])
-               
+            extracted_employees.extend(page_data)
+
             logging.info(f"Unpacked data up to row index {end_idx}")
             start_idx += page_size
             page += 1
@@ -136,4 +135,5 @@ def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
     except Exception as e:
         logging.error(f"Error ingesting JSON data: {e}")
         return pd.DataFrame()  # Return empty DataFrame on error
-    
+
+##### ingesting xml data #####
