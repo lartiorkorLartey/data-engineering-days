@@ -1,6 +1,7 @@
 
 import unicodedata
 import pandas as pd
+import logging
 
 ##### name standardization #####
 def normalize_name_series(series: pd.Series) -> pd.Series:
@@ -16,25 +17,22 @@ def normalize_name_series(series: pd.Series) -> pd.Series:
 
     Returns:
         pd.Series: A new Pandas Series where names are sanitized, normalized 
-        to NFC Unicode form, and formatted in Title Case. Missing 
-        or null values are handled gracefully as empty strings.
+        to NFC Unicode form, and formatted in Title Case.
 
     """
-    # 1. Drop missing values safely and force to string
+    # Drop missing values safely and force to string
     series = series.fillna("").astype(str).str.strip()
     
-    # 2. Unicode normalization (NFC form unifies accented characters)
+    # Unicode normalization (NFC form unifies accented characters)
     # We use a lambda to apply Python's native unicodedata to every text element
     series = series.apply(lambda x: unicodedata.normalize("NFC", x))
     
-    # 3. Title case standardization
+    # Title case standardization
     series = series.str.title() 
     
     return series
 
 ##### id resolution #####
-import pandas as pd
-
 def generate_namespaced_id(series: pd.Series, prefix: str) -> pd.Series:
     """
     Resolves ID overlaps by padding numeric identifiers to 6 digits 
@@ -48,14 +46,14 @@ def generate_namespaced_id(series: pd.Series, prefix: str) -> pd.Series:
     Returns:
         pd.Series: A standard string Series formatted as 'PREFIX-000000'.
     """
-    # 1. Handle missing values, convert to float string removal if needed
+    # Handle missing values, convert to float string removal if needed
     # If IDs came in as floats (like 1042.0), strip the decimal point
     sanitized = series.fillna("").astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
     
-    # 2. Filter out empty records
+    # Filter out empty records
     mask = (sanitized != "") & (sanitized != "nan")
     
-    # 3. Padding with zfill
+    # Padding with zfill
     padded_series = pd.Series("", index=series.index)
     padded_series[mask] = prefix + sanitized[mask].str.zfill(6)
     
@@ -63,9 +61,61 @@ def generate_namespaced_id(series: pd.Series, prefix: str) -> pd.Series:
 
 
 ##### currency normalization #####
+def normalize_salary_to_usd_annual(
+    salary_series: pd.Series, 
+    currency_series: pd.Series, 
+    frequency_series: pd.Series
+) -> pd.Series:
 
+    """
+    Cleans raw salary strings, normalizes various global currencies to USD, 
+    and standardizes payment frequencies to a singular annual float value.
 
+    Args:
+        salary_series (pd.Series): Raw salary values (e.g., "$85,000", "5000", or 60000).
+        currency_series (pd.Series): The currency of the raw salary (e.g., "USD", "EUR").
+        frequency_series (pd.Series): How often it is paid (e.g., "Annual", "Monthly", "Bi-Weekly").
 
+    Returns:
+        pd.Series: A float64 Pandas Series representing the scaled, annualized salary in USD.
+        Any corrupt text or invalid rates resolve gracefully to NaN values.
+    """
+
+    # Define internal translation tables
+    exchange_rates = {"USD": 1.0, "EUR": 1.09, "GBP": 1.27, "CAD": 0.73}
+    frequency_multipliers = {"annual": 1, "monthly": 12, "bi-weekly": 26, "biweekly": 26}
+
+    # Sanitize the salary text: Strip out "$", commas, and whitespace
+    clean_salary = (
+        salary_series.fillna("0")
+        .astype(str)
+        .str.replace(r"[$,\s]", "", regex=True) # Strips signs, commas, and spaces
+    )
+    numeric_base_salary = pd.to_numeric(clean_salary, errors="coerce").fillna(0.0)
+
+    # Normalize currencies: Default to USD if missing, and convert to uppercase
+    clean_currency = currency_series.fillna("USD").astype(str).str.strip().str.upper()
+
+    # Map the rates. Unmapped rates default to NaN
+    rate_multiplier = clean_currency.map(exchange_rates)
+
+    # 
+    unmapped_currencies = clean_currency[rate_multiplier.isna()].unique()
+    if len(unmapped_currencies) > 0:
+        logging.warning(f"Unmapped currencies detected in dataset: {unmapped_currencies}")
+
+    # Default unmapped rates to 1.0
+    rate_multiplier = rate_multiplier.fillna(1.0)
+
+    # Normalize and extract the pay frequency multipliers
+    clean_frequency = frequency_series.fillna("annual").astype(str).str.strip().str.lower()
+    freq_multiplier = clean_frequency.map(frequency_multipliers).fillna(1)
+
+    # Calculate final USD Annualized amount
+    # Formula: Base Amount * Currency Exchange Rate * Annual Payment Frequency
+    salary_usd_annual = numeric_base_salary * rate_multiplier * freq_multiplier
+
+    return salary_usd_annual.astype(float)
 
 
 ##### department taxonomy mapping #####
@@ -74,7 +124,6 @@ def generate_namespaced_id(series: pd.Series, prefix: str) -> pd.Series:
 
 
 ##### date parsing and standardization #####
-
 
 
 
