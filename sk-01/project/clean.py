@@ -1,5 +1,6 @@
 
 import unicodedata
+from unittest import result
 import pandas as pd
 import logging
 
@@ -32,6 +33,7 @@ def normalize_name_series(series: pd.Series) -> pd.Series:
     
     return series
 
+
 ##### id resolution #####
 def generate_namespaced_id(series: pd.Series, prefix: str) -> pd.Series:
     """
@@ -62,10 +64,10 @@ def generate_namespaced_id(series: pd.Series, prefix: str) -> pd.Series:
 
 ##### currency normalization #####
 def normalize_salary_to_usd_annual(
-    salary_series: pd.Series, 
-    currency_series: pd.Series, 
-    frequency_series: pd.Series
-) -> pd.Series:
+        salary_series: pd.Series, 
+        currency_series: pd.Series, 
+        frequency_series: pd.Series
+    ) -> pd.Series:
 
     """
     Cleans raw salary strings, normalizes various global currencies to USD, 
@@ -99,7 +101,7 @@ def normalize_salary_to_usd_annual(
     # Map the rates. Unmapped rates default to NaN
     rate_multiplier = clean_currency.map(exchange_rates)
 
-    # 
+    # Alert if unmapped currencies are detected
     unmapped_currencies = clean_currency[rate_multiplier.isna()].unique()
     if len(unmapped_currencies) > 0:
         logging.warning(f"Unmapped currencies detected in dataset: {unmapped_currencies}")
@@ -119,8 +121,65 @@ def normalize_salary_to_usd_annual(
 
 
 ##### department taxonomy mapping #####
+def map_department_taxonomy(dept_series: pd.Series) -> pd.Series:
+    """
+    Maps varied department names and codes into a unified standard
+    corporate department taxonomy. Logs unmapped values for auditing.
 
+    Args:
+        dept_series (pd.Series): A Pandas Series containing raw department values 
 
+    Returns:
+        pd.Series: A standardized Pandas Series containing unified taxonomy names. 
+        Missing or completely unmapped elements return as "Unknown".
+    """
+    # Establish the Master Taxonomy Mapping Table
+    DEPARTMENT_TAXONOMY_MAP = {
+        "Manufacturing": "Manufacturing",
+        "Strategy": "Strategy",
+        "Human Resources": "Human Resources",
+        "Marketing": "Marketing",
+        "Data Science": "Data Science",
+        "Product": "Product",
+        "Operations": "Operations",
+        "DevOps": "DevOps",
+        "Sales": "Sales",
+        "Business Development": "Business Development",
+        "Communications": "Communications",
+        "Customer Success": "Customer Success",
+        "Legal": "Legal",
+        "Quality Assurance": "Quality Assurance",
+        "Information Technology": "Information Technology",
+        "Supply Chain": "Supply Chain",
+        "Engineering": "Engineering",
+        "Finance": "Finance",
+    }
+
+    # Sanitize raw input to maximize hit chance
+    raw_cleaned = dept_series.fillna("").astype(str).str.strip()
+    
+    # Create a temporary search key series where strings are lowercase (for text names), 
+    # but keep upper case intact for the rigid codes like "ENG-01"
+    search_keys = raw_cleaned.apply(lambda x: x if "-" in x else x.lower())
+
+    # Apply the mapping translation layer
+    mapped_series = search_keys.map(DEPARTMENT_TAXONOMY_MAP)
+
+    # Audit Check: Identify and Log Unmapped Departments
+    # Find positions where the original value wasn't blank, but failed to find a map match
+    unmapped_mask = mapped_series.isna() & (raw_cleaned != "")
+    
+    if unmapped_mask.any():
+        # Extract unique unmapped codes/names to avoid flooding the log files
+        missing_variants = raw_cleaned[unmapped_mask].unique()
+        logging.warning(
+            f"Unmapped departments detected! Update DEPARTMENT_TAXONOMY_MAP with: {missing_variants}"
+        )
+
+    # Fill missing or unmapped values gracefully with a fallback category
+    final_series = mapped_series.fillna("Unknown")
+
+    return final_series.astype(str)
 
 
 ##### date parsing and standardization #####
