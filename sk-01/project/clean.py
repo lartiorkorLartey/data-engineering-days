@@ -155,28 +155,21 @@ def map_department_taxonomy(dept_series: pd.Series) -> pd.Series:
         "Finance": "Finance",
     }
 
-    # Sanitize raw input to maximize hit chance
-    raw_cleaned = dept_series.fillna("").astype(str).str.strip()
-    
-    # Create a temporary search key series where strings are lowercase (for text names), 
-    # but keep upper case intact for the rigid codes like "ENG-01"
-    search_keys = raw_cleaned.apply(lambda x: x if "-" in x else x.lower())
+    # Convert inputs to string and strip whitespace
+    search_keys = dept_series.fillna("").astype(str).str.strip()
 
-    # Apply the mapping translation layer
+    # Direct dictionary mapping execution
     mapped_series = search_keys.map(DEPARTMENT_TAXONOMY_MAP)
 
-    # Audit Check: Identify and Log Unmapped Departments
-    # Find positions where the original value wasn't blank, but failed to find a map match
-    unmapped_mask = mapped_series.isna() & (raw_cleaned != "")
-    
+    # Log any unrecognized departments for manual review
+    unmapped_mask = mapped_series.isna() & (search_keys != "")
     if unmapped_mask.any():
-        # Extract unique unmapped codes/names to avoid flooding the log files
-        missing_variants = raw_cleaned[unmapped_mask].unique()
+        missing_variants = dept_series[unmapped_mask].unique()
         logging.warning(
-            f"Unmapped departments detected! Update DEPARTMENT_TAXONOMY_MAP with: {missing_variants}"
+            f"Unmapped departments detected! Update TAXONOMY_MAP with: {missing_variants}"
         )
 
-    # Fill missing or unmapped values gracefully with a fallback category
+    # Fill everything else (unmapped departments and original NaNs) with "Unknown"
     final_series = mapped_series.fillna("Unknown")
 
     return final_series.astype(str)
