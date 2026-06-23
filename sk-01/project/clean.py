@@ -3,6 +3,7 @@ import unicodedata
 from unittest import result
 import pandas as pd
 import logging
+from datetime import datetime
 
 ##### name standardization #####
 def normalize_name_series(series: pd.Series) -> pd.Series:
@@ -176,6 +177,47 @@ def map_department_taxonomy(dept_series: pd.Series) -> pd.Series:
 
 
 ##### date parsing and standardization #####
+def standardize_and_validate_dates(date_series: pd.Series, date_format: str = None) -> pd.Series:
+    """
+    Parses varied string date layouts into uniform datetime64[ns] objects
+    and validates them against baseline operational boundaries.
 
+    Args:
+        date_series (pd.Series): A Pandas Series containing raw date strings or objects.
+        date_format (str, optional): The explicit format pattern to parse against 
+        (e.g., "%Y-%m-%d", "%m/%d/%Y", "%d-%b-%Y"). Defaults to None.
+
+    Returns:
+        pd.Series: A specialized datetime64[ns] Series. Corrupt strings or entries 
+        failing boundary validation resolve to NaT (Not a Time).
+    """
+    # Clean up padding and convert input data to strings
+    raw_cleaned = date_series.fillna("").astype(str).str.strip()
+    
+    # Convert to datetime objects using explicit format constraints if provided
+    if date_format:
+        parsed_dates = pd.to_datetime(raw_cleaned, format=date_format, errors="coerce")
+    else:
+        parsed_dates = pd.to_datetime(raw_cleaned, errors="coerce")
+
+    # Establish Validation Boundaries (Before 1970 or After Today)
+    lower_bound = pd.Timestamp("1970-01-01")
+    upper_bound = pd.Timestamp(datetime.now())
+
+    # Filter for Out-of-Range Anomalies
+    invalid_mask = parsed_dates.notna() & ((parsed_dates < lower_bound) | (parsed_dates > upper_bound))
+
+    # Audit Logging of Violations
+    if invalid_mask.any():
+        outliers = date_series[invalid_mask].unique()
+        logging.warning(
+            f"Anomalous dates detected outside plausible range (1970-Today)! "
+            f"Flagged values: {outliers}"
+        )
+        
+        # Coerce out-of-bounds anomalies to NaT to protect downstream math operations
+        parsed_dates[invalid_mask] = pd.NaT
+
+    return parsed_dates
 
 
