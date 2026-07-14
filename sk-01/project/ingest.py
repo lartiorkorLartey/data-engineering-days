@@ -20,6 +20,43 @@ CONFIG = {
 for d in [CONFIG["input_dir"], CONFIG["output_dir"]]:
     d.mkdir(parents=True, exist_ok=True)
 
+
+SCHEMA_LOOKUP = {
+    "employee_id": "employee_id",
+    "employee_identifier": "employee_id",
+    "first_name": "first_name",
+    "name_first": "first_name",
+    "last_name": "last_name",
+    "name_last": "last_name",
+    "name_full": "full_name",
+    "email": "email",
+    "contact_email": "email",
+    "department": "department",
+    "assignment_department": "department",
+    "job_title": "job_title",
+    "assignment_role": "job_title",
+    "hire_date": "hire_date",
+    "assignment_hire_timestamp": "hire_date",
+    "effective_date": "hire_date",
+    "country": "country",
+    "assignment_location": "country",
+    "employment_type": "employment_type",
+    "manager_id": "manager_id",
+    "manager_employee_id": "manager_id",
+    "source": "source",
+    "base_salary": "salary",
+    "currency": "currency",
+    "pay_frequency": "pay_frequency",
+    "plan_type": "plan_type",
+    "coverage_level": "coverage_level",
+    "enrollment_date": "enrollment_date",
+    "premium_employee": "premium_employee",
+    "premium_employer": "premium_employer",
+    "employment_status": "employment_status",
+    "bonus_target_pct": "bonus_target_pct"
+}
+
+
 ##### ingesting csv data #####
 def ingest_globaltech_csv(filepath: Path) -> pd.DataFrame:
     """
@@ -42,7 +79,17 @@ def ingest_globaltech_csv(filepath: Path) -> pd.DataFrame:
             na_values=["", "N/A", "null", "NULL", "none", "NaN"],
         )
 
-        df["source"] = "GlobalTech CSV"  # Add source column for traceability
+        df.rename(columns=SCHEMA_LOOKUP, inplace=True)  # Standardize column names
+
+        unmapped_columns = [col for col in df.columns if col not in SCHEMA_LOOKUP.values()]
+        if unmapped_columns:
+            logging.warning(
+                f"Unmapped columns detected in GlobalTech CSV: {unmapped_columns}. "
+                f"Update SCHEMA_LOOKUP to include these."
+            )
+
+        df["data_source"] = "GlobalTech CSV"  # Add source column for traceability
+
         logging.info(f"Successfully ingested GlobalTech CSV: {filepath} with {len(df)} records")
         return df
 
@@ -76,7 +123,7 @@ def ingest_payroll_excel(filepath: Path) -> pd.DataFrame:
             na_values=["", "N/A", "null", "NULL", "none", "NaN"],
         )
 
-        df["source"] = "Payroll Excel"  # Add source column for traceability
+        df["data_source"] = "Payroll Excel"  # Add source column for traceability
         logging.info(f"Successfully ingested Payroll Excel: {filepath} with {len(df)} records")
         return df
 
@@ -124,7 +171,7 @@ def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
             page += 1
 
         df = pd.json_normalize(extracted_employees, sep="_")
-        df["source"] = "AcquiredCo JSON"  # Add source column for traceability
+        df["data_source"] = "AcquiredCo JSON"  # Add source column for traceability
 
         logging.info(f"Successfully ingested AcquiredCo JSON: {filepath} with {len(df)} records")
         return df
@@ -162,7 +209,7 @@ def ingest_benefits_xml(filepath: Path) -> pd.DataFrame:
                 "enrollment_date": employee.findtext("enrollment_date"),
                 "premium_employee": employee.findtext("premium_employee"),
                 "premium_employer": employee.findtext("premium_employer"),
-                "source": "Benefits XML"  # Add source for traceability
+                "data_source": "Benefits XML"  # Add source for traceability
             }
             records.append(record)
 
