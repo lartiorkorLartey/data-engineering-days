@@ -4,12 +4,14 @@ import logging
 import xml.etree.ElementTree as ET
 import json
 
+
 ##### setup logging #####
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler()]
 )   
+
 
 ##### configuration #####
 CONFIG = {
@@ -21,6 +23,7 @@ for d in [CONFIG["input_dir"], CONFIG["output_dir"]]:
     d.mkdir(parents=True, exist_ok=True)
 
 
+##### schema mapping #####
 SCHEMA_LOOKUP = {
     "employee_id": "employee_id",
     "employee_identifier": "employee_id",
@@ -56,6 +59,8 @@ SCHEMA_LOOKUP = {
     "bonus_target_pct": "bonus_target_pct"
 }
 
+
+##### shared dead-letter writer #####
 def write_dead_letter_records(records: list, source_name: str) -> None:
     """
     Writes a list of malformed/rejected records to a dead-letter file
@@ -81,6 +86,7 @@ def write_dead_letter_records(records: list, source_name: str) -> None:
         f"{len(records)} malformed records from {source_name} written to "
         f"{dead_letter_path} for manual review."
     )
+
 
 ##### ingesting csv data #####
 def ingest_globaltech_csv(filepath: Path) -> pd.DataFrame:
@@ -112,6 +118,13 @@ def ingest_globaltech_csv(filepath: Path) -> pd.DataFrame:
                 f"Unmapped columns detected in GlobalTech CSV: {unmapped_columns}. "
                 f"Update SCHEMA_LOOKUP to include these."
             )
+
+        # Identify and quarantine malformed records (missing employee_id)
+        bad_mask = df["employee_id"].isna() | (df["employee_id"].astype(str).str.strip() == "")
+        if bad_mask.any():
+            bad_records = df[bad_mask].to_dict(orient="records")
+            write_dead_letter_records(bad_records, "globaltech_csv")
+            df = df[~bad_mask].copy()
 
         df["data_source"] = "GlobalTech CSV"  # Add source column for traceability
 
@@ -158,7 +171,15 @@ def ingest_payroll_excel(filepath: Path) -> pd.DataFrame:
                 f"Update SCHEMA_LOOKUP to include these."
             )
 
+        # Identify and quarantine malformed records (missing employee_id)
+        bad_mask = df["employee_id"].isna() | (df["employee_id"].astype(str).str.strip() == "")
+        if bad_mask.any():
+            bad_records = df[bad_mask].to_dict(orient="records")
+            write_dead_letter_records(bad_records, "payroll_excel")
+            df = df[~bad_mask].copy()
+
         df["data_source"] = "Payroll Excel"  # Add source column for traceability
+
         logging.info(f"Successfully ingested Payroll Excel: {filepath} with {len(df)} records")
         return df
 
@@ -175,6 +196,8 @@ def ingest_payroll_excel(filepath: Path) -> pd.DataFrame:
 def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
     """
     Ingests AcquiredCo data from a JSON file.
+    Validates each record per page; malformed records are sent to the
+    shared dead-letter writer for manual review.
 
     Args:
     filepath: Path to the JSON file.
@@ -183,11 +206,12 @@ def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
     DataFrame containing the ingested data, or an empty DataFrame on error.
     """
     try:
-        logging.info(f"Ingesting AcquiredCo JSON: {filepath}")  
-         
+        logging.info(f"Ingesting AcquiredCo JSON: {filepath}")
+
         raw_data = json.loads(filepath.read_text())
         employees = raw_data["employees"]
         extracted_employees = []
+        dead_letter_records = []
         page = 1
         start_idx = 0
         page_size = 1000
@@ -200,15 +224,35 @@ def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
             if not page_data:
                 break
 
-            extracted_employees.extend(page_data)
+            # Validate each record in this page individually
+            for record in page_data:
+                if not isinstance(record, dict):
+                    dead_letter_records.append({
+                        "reason": "Record is not a valid object",
+                        "raw_record": record,
+                        "page": page,
+                    })
+                    continue
 
-            logging.info(f"Unpacked data up to row index {end_idx}")
+                if not record.get("employee_identifier"):
+                    dead_letter_records.append({
+                        "reason": "Missing employee_identifier",
+                        "raw_record": record,
+                        "page": page,
+                    })
+                    continue
+
+                extracted_employees.append(record)
+
+            logging.info(f"Validated page {page}: rows up to index {end_idx}")
             start_idx += page_size
             page += 1
 
+        write_dead_letter_records(dead_letter_records, "acquiredco_json")
+
         df = pd.json_normalize(extracted_employees, sep="_")
 
-        df.rename(columns=SCHEMA_LOOKUP, inplace=True)  # Standardize column names  
+        df.rename(columns=SCHEMA_LOOKUP, inplace=True)  # Standardize column names
 
         unmapped_columns = [col for col in df.columns if col not in SCHEMA_LOOKUP.values()]
         if unmapped_columns:
@@ -216,14 +260,15 @@ def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
                 f"Unmapped columns detected in AcquiredCo JSON: {unmapped_columns}. "
                 f"Update SCHEMA_LOOKUP to include these."
             )
-            
+
         df["data_source"] = "AcquiredCo JSON"  # Add source column for traceability
+
         logging.info(f"Successfully ingested AcquiredCo JSON: {filepath} with {len(df)} records")
         return df
 
     except FileNotFoundError:
         logging.error(f"File not found: {filepath}")
-        return pd.DataFrame()  # Return empty DataFrame on error        
+        return pd.DataFrame()  # Return empty DataFrame on error
     except Exception as e:
         logging.error(f"Error ingesting AcquiredCo JSON: {e}")
         return pd.DataFrame()  # Return empty DataFrame on error
@@ -246,10 +291,28 @@ def ingest_benefits_xml(filepath: Path) -> pd.DataFrame:
         tree = ET.parse(filepath)
         root = tree.getroot()
         records = []
+        dead_letter_records = []
 
         for employee in root.findall("enrollment"):
+            employee_id = employee.findtext("employee_id")
+
+            # Validate while employee_id is still real None/empty, before str conversion
+            if employee_id is None or employee_id.strip() == "":
+                dead_letter_records.append({
+                    "reason": "Missing employee_id",
+                    "raw_record": {
+                        "employee_id": employee_id,
+                        "plan_type": employee.findtext("plan_type"),
+                        "coverage_level": employee.findtext("coverage_level"),
+                        "enrollment_date": employee.findtext("enrollment_date"),
+                        "premium_employee": employee.findtext("premium_employee"),
+                        "premium_employer": employee.findtext("premium_employer"),
+                    },
+                })
+                continue
+
             record = {
-                "employee_id": employee.findtext("employee_id"),
+                "employee_id": employee_id,
                 "plan_type": employee.findtext("plan_type"),
                 "coverage_level": employee.findtext("coverage_level"),
                 "enrollment_date": employee.findtext("enrollment_date"),
@@ -258,6 +321,8 @@ def ingest_benefits_xml(filepath: Path) -> pd.DataFrame:
                 "data_source": "Benefits XML"  # Add source for traceability
             }
             records.append(record)
+
+        write_dead_letter_records(dead_letter_records, "benefits_xml")
 
         df = pd.DataFrame(records)
         df["enrollment_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
