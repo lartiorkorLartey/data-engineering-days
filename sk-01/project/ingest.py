@@ -37,7 +37,7 @@ SCHEMA_LOOKUP = {
     "assignment_role": "job_title",
     "hire_date": "hire_date",
     "assignment_hire_timestamp": "hire_date",
-    "effective_date": "hire_date",
+    "effective_date": "salary_effective_date",
     "country": "country",
     "assignment_location": "country",
     "employment_type": "employment_type",
@@ -101,6 +101,7 @@ def ingest_globaltech_csv(filepath: Path) -> pd.DataFrame:
         logging.error(f"Error ingesting GlobalTech CSV: {e}")
         return pd.DataFrame()  # Return empty DataFrame on error
 
+
 ##### ingesting excel data #####
 def ingest_payroll_excel(filepath: Path) -> pd.DataFrame:
     """
@@ -123,6 +124,15 @@ def ingest_payroll_excel(filepath: Path) -> pd.DataFrame:
             na_values=["", "N/A", "null", "NULL", "none", "NaN"],
         )
 
+        df.rename(columns=SCHEMA_LOOKUP, inplace=True)  # Standardize column names
+
+        unmapped_columns = [col for col in df.columns if col not in SCHEMA_LOOKUP.values()]
+        if unmapped_columns:
+            logging.warning(
+                f"Unmapped columns detected in Payroll Excel: {unmapped_columns}. "
+                f"Update SCHEMA_LOOKUP to include these."
+            )
+
         df["data_source"] = "Payroll Excel"  # Add source column for traceability
         logging.info(f"Successfully ingested Payroll Excel: {filepath} with {len(df)} records")
         return df
@@ -134,6 +144,7 @@ def ingest_payroll_excel(filepath: Path) -> pd.DataFrame:
     except Exception as e:
         logging.error(f"Error ingesting Payroll Excel: {e}")
         return pd.DataFrame()  # Return empty DataFrame on error
+
 
 ##### ingesting json data #####
 def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
@@ -171,8 +182,17 @@ def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
             page += 1
 
         df = pd.json_normalize(extracted_employees, sep="_")
-        df["data_source"] = "AcquiredCo JSON"  # Add source column for traceability
 
+        df.rename(columns=SCHEMA_LOOKUP, inplace=True)  # Standardize column names  
+
+        unmapped_columns = [col for col in df.columns if col not in SCHEMA_LOOKUP.values()]
+        if unmapped_columns:
+            logging.warning(
+                f"Unmapped columns detected in AcquiredCo JSON: {unmapped_columns}. "
+                f"Update SCHEMA_LOOKUP to include these."
+            )
+            
+        df["data_source"] = "AcquiredCo JSON"  # Add source column for traceability
         logging.info(f"Successfully ingested AcquiredCo JSON: {filepath} with {len(df)} records")
         return df
 
@@ -180,8 +200,9 @@ def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
         logging.error(f"File not found: {filepath}")
         return pd.DataFrame()  # Return empty DataFrame on error        
     except Exception as e:
-        logging.error(f"Error ingesting JSON data: {e}")
+        logging.error(f"Error ingesting AcquiredCo JSON: {e}")
         return pd.DataFrame()  # Return empty DataFrame on error
+
 
 ##### ingesting xml data #####
 def ingest_benefits_xml(filepath: Path) -> pd.DataFrame:
@@ -220,6 +241,15 @@ def ingest_benefits_xml(filepath: Path) -> pd.DataFrame:
         df["premium_employee"] = pd.to_numeric(df["premium_employee"], errors="coerce")
         df["premium_employer"] = pd.to_numeric(df["premium_employer"], errors="coerce")
 
+        df.rename(columns=SCHEMA_LOOKUP, inplace=True)  # Standardize column names
+
+        unmapped_columns = [col for col in df.columns if col not in SCHEMA_LOOKUP.values()]
+        if unmapped_columns:
+            logging.warning(
+                f"Unmapped columns detected in Benefits XML: {unmapped_columns}. "
+                f"Update SCHEMA_LOOKUP to include these."
+            )
+
         logging.info(f"Successfully ingested Benefits XML: {filepath} with {len(df)} records")
         return df
 
@@ -227,6 +257,6 @@ def ingest_benefits_xml(filepath: Path) -> pd.DataFrame:
         logging.error(f"File not found: {filepath}")
         return pd.DataFrame()  # Return empty DataFrame on error        
     except Exception as e:
-        logging.error(f"Error ingesting XML data: {e}")
+        logging.error(f"Error ingesting Benefits XML: {e}")
         return pd.DataFrame()  # Return empty DataFrame on error
     
