@@ -56,6 +56,31 @@ SCHEMA_LOOKUP = {
     "bonus_target_pct": "bonus_target_pct"
 }
 
+def write_dead_letter_records(records: list, source_name: str) -> None:
+    """
+    Writes a list of malformed/rejected records to a dead-letter file
+    for manual review, and logs a summary warning.
+
+    Args:
+        records: List of dicts, each representing one bad record.
+                 Each dict should include enough context to explain
+                 why it was rejected (e.g. "reason", "page"/"row").
+        source_name: Identifier for the source file (used in the
+                     output filename and log message), e.g. "acquiredco_json".
+
+    Returns:
+        None. Writes a JSON file to CONFIG["output_dir"] if records is non-empty.
+    """
+    if not records:
+        return
+
+    dead_letter_path = CONFIG["output_dir"] / f"{source_name}_dead_letter.json"
+    dead_letter_path.write_text(json.dumps(records, indent=2, default=str))
+
+    logging.warning(
+        f"{len(records)} malformed records from {source_name} written to "
+        f"{dead_letter_path} for manual review."
+    )
 
 ##### ingesting csv data #####
 def ingest_globaltech_csv(filepath: Path) -> pd.DataFrame:
