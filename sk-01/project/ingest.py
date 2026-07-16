@@ -60,6 +60,30 @@ SCHEMA_LOOKUP = {
 }
 
 
+##### shared schema alignment function #####
+def align_schema(df: pd.DataFrame, source_name: str) -> pd.DataFrame:
+    """
+    Renames a DataFrame's columns to the standard schema using SCHEMA_LOOKUP,
+    and logs a warning for any columns that don't map to a standard name.
+
+    Args:
+        df: DataFrame with raw, source-specific column names.
+        source_name: Identifier for the source (used in the log message).
+
+    Returns:
+        DataFrame with columns renamed to standard names where a mapping exists.
+    """ 
+    df = df.rename(columns=SCHEMA_LOOKUP)  # Standardize column names
+    
+    unmapped_columns = [col for col in df.columns if col not in SCHEMA_LOOKUP.values()]
+    if unmapped_columns:
+        logging.warning(
+            f"Unmapped columns detected in {source_name}: {unmapped_columns}. "
+            f"Update SCHEMA_LOOKUP to include these."
+        )
+    return df
+
+
 ##### shared dead-letter writer #####
 def write_dead_letter_records(records: list, source_name: str) -> None:
     """
@@ -110,14 +134,7 @@ def ingest_globaltech_csv(filepath: Path) -> pd.DataFrame:
             na_values=["", "N/A", "null", "NULL", "none", "NaN"],
         )
 
-        df.rename(columns=SCHEMA_LOOKUP, inplace=True)  # Standardize column names
-
-        unmapped_columns = [col for col in df.columns if col not in SCHEMA_LOOKUP.values()]
-        if unmapped_columns:
-            logging.warning(
-                f"Unmapped columns detected in GlobalTech CSV: {unmapped_columns}. "
-                f"Update SCHEMA_LOOKUP to include these."
-            )
+        df = align_schema(df, "GlobalTech CSV")
 
         # Identify and quarantine malformed records (missing employee_id)
         bad_mask = df["employee_id"].isna() | (df["employee_id"].astype(str).str.strip() == "")
@@ -162,14 +179,7 @@ def ingest_payroll_excel(filepath: Path) -> pd.DataFrame:
             na_values=["", "N/A", "null", "NULL", "none", "NaN"],
         )
 
-        df.rename(columns=SCHEMA_LOOKUP, inplace=True)  # Standardize column names
-
-        unmapped_columns = [col for col in df.columns if col not in SCHEMA_LOOKUP.values()]
-        if unmapped_columns:
-            logging.warning(
-                f"Unmapped columns detected in Payroll Excel: {unmapped_columns}. "
-                f"Update SCHEMA_LOOKUP to include these."
-            )
+        df = align_schema(df, "Payroll Excel")
 
         # Identify and quarantine malformed records (missing employee_id)
         bad_mask = df["employee_id"].isna() | (df["employee_id"].astype(str).str.strip() == "")
@@ -252,14 +262,7 @@ def ingest_acquiredco_json(filepath: Path) -> pd.DataFrame:
 
         df = pd.json_normalize(extracted_employees, sep="_")
 
-        df.rename(columns=SCHEMA_LOOKUP, inplace=True)  # Standardize column names
-
-        unmapped_columns = [col for col in df.columns if col not in SCHEMA_LOOKUP.values()]
-        if unmapped_columns:
-            logging.warning(
-                f"Unmapped columns detected in AcquiredCo JSON: {unmapped_columns}. "
-                f"Update SCHEMA_LOOKUP to include these."
-            )
+        df = align_schema(df, "AcquiredCo JSON")
 
         df["data_source"] = "AcquiredCo JSON"  # Add source column for traceability
 
@@ -331,14 +334,7 @@ def ingest_benefits_xml(filepath: Path) -> pd.DataFrame:
         df["premium_employee"] = pd.to_numeric(df["premium_employee"], errors="coerce")
         df["premium_employer"] = pd.to_numeric(df["premium_employer"], errors="coerce")
 
-        df.rename(columns=SCHEMA_LOOKUP, inplace=True)  # Standardize column names
-
-        unmapped_columns = [col for col in df.columns if col not in SCHEMA_LOOKUP.values()]
-        if unmapped_columns:
-            logging.warning(
-                f"Unmapped columns detected in Benefits XML: {unmapped_columns}. "
-                f"Update SCHEMA_LOOKUP to include these."
-            )
+        df = align_schema(df, "Benefits XML")
 
         logging.info(f"Successfully ingested Benefits XML: {filepath} with {len(df)} records")
         return df
