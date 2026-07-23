@@ -5,6 +5,7 @@ import pandas as pd
 import logging
 from datetime import datetime
 
+
 ##### name standardization #####
 def normalize_name_series(series: pd.Series) -> pd.Series:
     """
@@ -81,25 +82,33 @@ def normalize_salary_to_usd_annual(
 
     Returns:
         pd.Series: A float64 Pandas Series representing the scaled, annualized salary in USD.
-        Any corrupt text or invalid rates resolve gracefully to NaN values.
+        Missing or unmapped salary, currency, or frequency values all resolve to NaN
+        (never silently defaulted), and unmapped/missing currencies and frequencies
+        are logged for manual review.
     """
 
     # Define internal translation tables
     exchange_rates = {"USD": 1.0, "EUR": 1.09, "GBP": 1.27, "CAD": 0.73}
     frequency_multipliers = {"annual": 1, "monthly": 12, "bi-weekly": 26, "biweekly": 26}
 
-    # Sanitize the salary text: Strip out "$", commas, and whitespace
+    # Sanitize the salary text: Strip out "$", commas, and whitespace.
+    # A genuinely missing salary becomes NaN, not 0 -- 0 would misrepresent
+    # "unknown" as "verified zero income".
     clean_salary = (
-        salary_series.fillna("0")
+        salary_series.fillna("")
         .astype(str)
         .str.replace(r"[$,\s]", "", regex=True) # Strips signs, commas, and spaces
     )
-    numeric_base_salary = pd.to_numeric(clean_salary, errors="coerce").fillna(0.0)
+    numeric_base_salary = pd.to_numeric(clean_salary, errors="coerce")
 
-    # Normalize currencies: Default to USD if missing, and convert to uppercase
-    clean_currency = currency_series.fillna("USD").astype(str).str.strip().str.upper()
+    # Normalize currency text. Blank/missing values are NOT defaulted to
+    # "USD" anymore -- they stay blank so they fall through to the
+    # unmapped check below and resolve to NaN.
+    clean_currency = currency_series.fillna("").astype(str).str.strip().str.upper()
 
-    # Map the rates. Unmapped rates default to NaN
+    # Map the rates. Unmapped (including blank) rates stay NaN -- no silent
+    # 1.0 fallback, since that would misrepresent an unrecognized/missing
+    # currency as USD.
     rate_multiplier = clean_currency.map(exchange_rates)
 
     # Alert if unmapped currencies are detected
@@ -107,15 +116,21 @@ def normalize_salary_to_usd_annual(
     if len(unmapped_currencies) > 0:
         logging.warning(f"Unmapped currencies detected in dataset: {unmapped_currencies}")
 
-    # Default unmapped rates to 1.0
-    rate_multiplier = rate_multiplier.fillna(1.0)
+    # Normalize pay frequency text. Blank/missing values are NOT defaulted
+    # to "annual" anymore -- they stay blank so they fall through to the
+    # unmapped check below and resolve to NaN.
+    clean_frequency = frequency_series.fillna("").astype(str).str.strip().str.lower()
+    freq_multiplier = clean_frequency.map(frequency_multipliers)
 
-    # Normalize and extract the pay frequency multipliers
-    clean_frequency = frequency_series.fillna("annual").astype(str).str.strip().str.lower()
-    freq_multiplier = clean_frequency.map(frequency_multipliers).fillna(1)
+    # Alert if unmapped (including blank) frequencies are detected
+    unmapped_frequencies = clean_frequency[freq_multiplier.isna()].unique()
+    if len(unmapped_frequencies) > 0:
+        logging.warning(f"Unmapped pay frequencies detected in dataset: {unmapped_frequencies}")
 
     # Calculate final USD Annualized amount
     # Formula: Base Amount * Currency Exchange Rate * Annual Payment Frequency
+    # NaN in any of the three inputs naturally propagates to NaN here --
+    # no separate combined check needed.
     salary_usd_annual = numeric_base_salary * rate_multiplier * freq_multiplier
 
     return salary_usd_annual.astype(float)
@@ -134,7 +149,14 @@ def map_department_taxonomy(dept_series: pd.Series) -> pd.Series:
         pd.Series: A standardized Pandas Series containing unified taxonomy names. 
         Missing or completely unmapped elements return as "Unknown".
     """
+
     # Establish the Master Taxonomy Mapping Table
+
+    # Department names verified using dept_series.unique() on both GlobalTech CSV
+    # and AcquiredCo JSON sources. Neither dataset contained department codes
+    # (e.g. "ENG-01") as described in the requirements -- both use full names
+    # (e.g. "Engineering") throughout. No code-to-name translation layer is needed.
+
     DEPARTMENT_TAXONOMY_MAP = {
         "Manufacturing": "Manufacturing",
         "Strategy": "Strategy",
@@ -177,15 +199,18 @@ def map_department_taxonomy(dept_series: pd.Series) -> pd.Series:
 
 
 ##### date parsing and standardization #####
-def standardize_and_validate_dates(date_series: pd.Series, date_format: str = None) -> pd.Series:
+def standardize_and_validate_dates(date_series: pd.Series, date_format: str) -> pd.Series:
     """
     Parses varied string date layouts into uniform datetime64[ns] objects
     and validates them against baseline operational boundaries.
 
     Args:
         date_series (pd.Series): A Pandas Series containing raw date strings or objects.
-        date_format (str, optional): The explicit format pattern to parse against 
-        (e.g., "%Y-%m-%d", "%m/%d/%Y", "%d-%b-%Y"). Defaults to None.
+        date_format (str): The explicit format pattern to parse against 
+        (e.g., "%Y-%m-%d", "%m/%d/%Y", "%d-%b-%Y"). Required -- callers must know
+        and state the exact format for their source rather than relying on
+        pandas to guess, since ambiguous formats (e.g. "03/04/2022") can be
+        silently misparsed.
 
     Returns:
         pd.Series: A specialized datetime64[ns] Series. Corrupt strings or entries 
@@ -193,12 +218,9 @@ def standardize_and_validate_dates(date_series: pd.Series, date_format: str = No
     """
     # Clean up padding and convert input data to strings
     raw_cleaned = date_series.fillna("").astype(str).str.strip()
-    
-    # Convert to datetime objects using explicit format constraints if provided
-    if date_format:
-        parsed_dates = pd.to_datetime(raw_cleaned, format=date_format, errors="coerce")
-    else:
-        parsed_dates = pd.to_datetime(raw_cleaned, errors="coerce")
+
+    # Convert to datetime objects using the explicit, required format
+    parsed_dates = pd.to_datetime(raw_cleaned, format=date_format, errors="coerce")
 
     # Establish Validation Boundaries (Before 1970 or After Today)
     lower_bound = pd.Timestamp("1970-01-01")
@@ -214,10 +236,8 @@ def standardize_and_validate_dates(date_series: pd.Series, date_format: str = No
             f"Anomalous dates detected outside plausible range (1970-Today)! "
             f"Flagged values: {outliers}"
         )
-        
-        # Coerce out-of-bounds anomalies to NaT to protect downstream math operations
+
+        # Coerce out-of-bounds anomalies to NaT
         parsed_dates[invalid_mask] = pd.NaT
 
     return parsed_dates
-
-
